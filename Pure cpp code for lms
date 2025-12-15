@@ -1,0 +1,396 @@
+
+
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
+#include <exception>
+#include <cctype>
+#include <algorithm>
+using namespace std;
+
+// ===================== CONSTANTS =====================
+const int MAX_USERS = 50;
+const int MAX_COURSES = 10;
+const int MAX_STUDENTS = 50;
+const int MAX_ASSIGNMENTS = 10;
+
+// ===================== VALIDATION =====================
+bool isValidRoll(const string& r) {
+    if (r.length() != 13) return false;
+    if (r.substr(0, 3) != "01-") return false;
+    if (r[9] != '-') return false;
+    for (int i = 3; i <= 8; i++) if (!isdigit(r[i])) return false;
+    for (int i = 10; i <= 12; i++) if (!isdigit(r[i])) return false;
+    return true;
+}
+
+bool isValidGmail(const string& g) {
+    const string s = "@gmail.com";
+    return g.length() > s.length() && g.substr(g.length() - s.length()) == s;
+}
+
+bool isStrongPassword(const string& p) {
+    if (p.length() < 6) return false;
+    for (char c : p) if (isdigit(c)) return true;
+    return false;
+}
+
+// ===================== USER BASE =====================
+class User {
+protected:
+    int id;
+    string name, username, password, role;
+public:
+    User(int i, const string& n, const string& u, const string& p, const string& r)
+        : id(i), name(n), username(u), password(p), role(r) {
+    }
+    virtual ~User() {}
+
+    int getID() const { return id; }
+    string getName() const { return name; }
+    string getUsername() const { return username; }
+    string getRole() const { return role; }
+    bool verifyPassword(const string& p) const { return p == password; }
+
+    virtual void menu() = 0;
+
+    void save(ofstream& fout) const {
+        fout << id << "|" << role << "|" << name << "|" << username << "|" << password << '\n';
+    }
+};
+
+// ===================== ASSIGNMENT =====================
+class Assignment {
+    string title;
+    int studentID[MAX_STUDENTS];
+    int marks[MAX_STUDENTS];
+    int count;
+public:
+    Assignment(const string& t = "") : title(t), count(0) {}
+
+    void addStudent(int id) {
+        if (count >= MAX_STUDENTS) return;
+        studentID[count] = id;
+        marks[count++] = -1;
+    }
+
+    void grade(int id, int m) {
+        for (int i = 0; i < count; i++)
+            if (studentID[i] == id) marks[i] = m;
+    }
+
+    void show() const {
+        cout << "  Assignment: " << title << '\n';
+        for (int i = 0; i < count; i++)
+            cout << "    StudentID: " << studentID[i]
+            << " Marks: " << (marks[i] == -1 ? 0 : marks[i]) << '\n';
+    }
+};
+
+// ===================== COURSE =====================
+class Course {
+    string name;
+    int teacherID;
+    int students[MAX_STUDENTS];
+    int studentCount;
+    Assignment assignments[MAX_ASSIGNMENTS];
+    int assignmentCount;
+public:
+    Course(const string& n = "") : name(n), teacherID(-1), studentCount(0), assignmentCount(0) {}
+
+    string getName() const { return name; }
+    int getTeacherID() const { return teacherID; }
+    void assignTeacher(int id) { teacherID = id; }
+
+    void enrollStudent(int id) {
+        if (studentCount >= MAX_STUDENTS) return;
+        students[studentCount++] = id;
+        for (int i = 0; i < assignmentCount; i++) assignments[i].addStudent(id);
+    }
+
+    void addAssignment(const string& t) {
+        if (assignmentCount >= MAX_ASSIGNMENTS) return;
+        assignments[assignmentCount] = Assignment(t);
+        for (int i = 0; i < studentCount; i++) assignments[assignmentCount].addStudent(students[i]);
+        assignmentCount++;
+    }
+
+    void gradeStudent(int assignIdx, int sid, int marks) {
+        if (assignIdx < 0 || assignIdx >= assignmentCount) return;
+        assignments[assignIdx].grade(sid, marks);
+    }
+
+    void show() const {
+        cout << "Course: " << name << '\n';
+        for (int i = 0; i < assignmentCount; i++) assignments[i].show();
+    }
+
+    void save(ofstream& fout) const {
+        fout << name << "|" << teacherID << '\n';
+    }
+
+    void load(const string& line) {
+        stringstream ss(line);
+        string t;
+        getline(ss, name, '|');
+        getline(ss, t, '|');
+        teacherID = atoi(t.c_str());
+    }
+    int getAssignmentCount() const { return assignmentCount; }
+
+    void listAssignments() const {
+        for (int i = 0; i < assignmentCount; i++)
+            cout << i << ". " << endl;
+    }
+
+};
+
+// ===================== FORWARD DATABASE =====================
+class LMSDatabase;
+
+// ===================== STUDENT =====================
+class Student : public User {
+public:
+    Student(int i, const string& n, const string& u, const string& p)
+        : User(i, n, u, p, "student") {
+    }
+
+    void menu();
+};
+
+// ===================== TEACHER =====================
+class Teacher : public User {
+public:
+    Teacher(int i, const string& n, const string& u, const string& p)
+        : User(i, n, u, p, "teacher") {
+    }
+
+    void menu();
+};
+
+// ===================== ADMIN =====================
+class Admin : public User {
+public:
+    Admin(int i, const string& n, const string& u, const string& p)
+        : User(i, n, u, p, "admin") {
+    }
+
+    void menu();
+};
+
+// ===================== DATABASE =====================
+class LMSDatabase {
+    User* users[MAX_USERS];
+    int userCount;
+    Course courses[MAX_COURSES];
+    int courseCount;
+    int nextID;
+
+public:
+    LMSDatabase() : userCount(0), courseCount(0), nextID(1) {
+        loadUsers();
+        loadCourses();
+    }
+
+    int generateID() { return nextID++; }
+
+    void addUser(User* u) {
+        if (userCount < MAX_USERS) users[userCount++] = u;
+        saveUsers();
+    }
+
+    void deleteUser(int id) {
+        for (int i = 0; i < userCount; i++) {
+            if (users[i]->getID() == id) {
+                delete users[i];
+                for (int j = i; j < userCount - 1; j++) users[j] = users[j + 1];
+                userCount--;
+                saveUsers();
+                return;
+            }
+        }
+    }
+
+    User* login(const string& u, const string& p) const {
+        for (int i = 0; i < userCount; i++)
+            if (users[i]->getUsername() == u && users[i]->verifyPassword(p))
+                return users[i];
+        return NULL;
+    }
+
+    int getCourseCount() const { return courseCount; }
+    Course* getCourse(int i) { return (i >= 0 && i < courseCount) ? &courses[i] : NULL; }
+
+    void addCourse(const string& n) {
+        if (courseCount < MAX_COURSES) courses[courseCount++] = Course(n);
+        saveCourses();
+    }
+
+    void saveUsers() const {
+        ofstream fout("users.txt");
+        for (int i = 0; i < userCount; i++) users[i]->save(fout);
+    }
+
+    void saveCourses() const {
+        ofstream fout("courses.txt");
+        for (int i = 0; i < courseCount; i++) courses[i].save(fout);
+    }
+
+    void loadUsers() {
+        ifstream fin("users.txt");
+        if (!fin) return;
+        string line;
+        while (getline(fin, line)) {
+            stringstream ss(line);
+            string idStr, role, name, uname, pass;
+            getline(ss, idStr, '|');
+            getline(ss, role, '|');
+            getline(ss, name, '|');
+            getline(ss, uname, '|');
+            getline(ss, pass, '|');
+            int id = atoi(idStr.c_str());
+            nextID = max(nextID, id + 1);
+            if (role == "admin") users[userCount++] = new Admin(id, name, uname, pass);
+            else if (role == "teacher") users[userCount++] = new Teacher(id, name, uname, pass);
+            else if (role == "student") users[userCount++] = new Student(id, name, uname, pass);
+        }
+    }
+
+    void loadCourses() {
+        ifstream fin("courses.txt");
+        if (!fin) return;
+        string line;
+        while (getline(fin, line) && courseCount < MAX_COURSES)
+            courses[courseCount++].load(line);
+    }
+};
+
+// ===================== MENUS IMPLEMENTATION =====================
+void Student::menu() {
+    LMSDatabase& db = *new LMSDatabase();
+    cout << "Available Courses:\n";
+    for (int i = 0; i < db.getCourseCount(); i++)
+        cout << i << ". " << db.getCourse(i)->getName() << '\n';
+    int c; cout << "Enroll index: "; cin >> c;
+    if (db.getCourse(c)) db.getCourse(c)->enrollStudent(id);
+}
+
+void Teacher::menu() {
+    LMSDatabase db;   // load existing data
+    int myCourses[MAX_COURSES];
+    int count = 0;
+
+    cout << "\nYour Courses:\n";
+    for (int i = 0; i < db.getCourseCount(); i++) {
+        if (db.getCourse(i)->getTeacherID() == id) {
+            cout << count << ". " << db.getCourse(i)->getName() << '\n';
+            myCourses[count++] = i;
+        }
+    }
+
+    if (count == 0) {
+        cout << "No courses assigned.\n";
+        return;
+    }
+
+    int choice;
+    cout << "\nSelect course index: ";
+    cin >> choice;
+    if (choice < 0 || choice >= count) return;
+
+    Course* c = db.getCourse(myCourses[choice]);
+
+    int ch;
+    cout << "\n1.Add Assignment\n2.View Course\nChoice: ";
+    cin >> ch;
+
+    if (ch == 1) {
+        string title;
+        cout << "Assignment Title: ";
+        cin.ignore();
+        getline(cin, title);
+        c->addAssignment(title);
+        db.saveCourses();
+        cout << "Assignment added successfully.\n";
+    }
+    else if (ch == 2) {
+        c->show();
+    }
+}
+
+void Admin::menu() {
+    LMSDatabase db;
+    int ch;
+    cout << "1.Add Course 2.Delete User: ";
+    cin >> ch;
+
+    if (ch == 1) {
+        string n;
+        int tid;
+        cout << "Course name: ";
+        cin >> n;
+        cout << "Teacher ID: ";
+        cin >> tid;
+
+        db.addCourse(n);
+        db.getCourse(db.getCourseCount() - 1)->assignTeacher(tid);
+        db.saveCourses();
+    }
+    else if (ch == 2) {
+        int id;
+        cout << "User ID: ";
+        cin >> id;
+        db.deleteUser(id);
+    }
+}
+
+
+// ===================== MAIN =====================
+int main() {
+    LMSDatabase db;
+
+    if (!db.login("admin", "admin123"))
+        db.addUser(new Admin(0, "Admin", "admin", "admin123"));
+
+    while (true) {
+        try {
+            int ch;
+            cout << "\n1.Register 2.Login 0.Exit: ";
+            cin >> ch;
+            if (ch == 0) break;
+
+            if (ch == 1) {
+                int role;
+                cout << "1.Student 2.Teacher: "; cin >> role;
+                cin.ignore();
+                string n, u, p;
+                cout << "Name: "; getline(cin, n);
+                cout << "Username: "; cin >> u;
+                cout << "Password: "; cin >> p;
+                if (!isStrongPassword(p)) throw runtime_error("Weak password");
+                if (role == 1) {
+                    if (!isValidRoll(u)) throw runtime_error("Invalid roll");
+                    db.addUser(new Student(db.generateID(), n, u, p));
+                }
+                else {
+                    if (!isValidGmail(u)) throw runtime_error("Invalid gmail");
+                    db.addUser(new Teacher(db.generateID(), n, u, p));
+                }
+            }
+            else if (ch == 2) {
+                string u, p;
+                cout << "Username: "; cin >> u;
+                cout << "Password: "; cin >> p;
+                User* usr = db.login(u, p);
+                if (!usr) throw runtime_error("Invalid login");
+                cout << "Welcome " << usr->getName() << '\n';
+                usr->menu();
+            }
+        }
+        catch (exception& e) {
+            cout << "Error: " << e.what() << '\n';
+        }
+    }
+    return 0;
+}
